@@ -110,10 +110,10 @@ class GatedMLP(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        x = self.c_fc(x)
+        intermediate = self.c_fc(x)
         # GLU operation
         gate = self.c_gate(x)
-        x = x * self.act(gate)
+        x = intermediate * self.act(gate)
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
