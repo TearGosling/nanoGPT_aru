@@ -15,6 +15,15 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from aru import ActivatedRotaryUnit, ReluSquared
+
+ACT_FUNCTIONS = {
+    "aru": ActivatedRotaryUnit,
+    "gelu": nn.GELU,
+    "relu2": ReluSquared,
+    "swish": nn.SiLU,
+}
+
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
 
@@ -80,13 +89,31 @@ class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.gelu    = nn.GELU()
+        self.act     = ACT_FUNCTIONS[config.act_fn]
         self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = self.gelu(x)
+        x = self.act(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+    
+class GatedMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_gate  = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.act     = ACT_FUNCTIONS[config.act_fn]
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        # GLU operation
+        gate = self.c_gate(x)
+        x = x * self.act(gate)
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
@@ -98,7 +125,7 @@ class Block(nn.Module):
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = MLP(config)
+        self.mlp = GatedMLP(config) if config.gated else MLP(config)
 
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
@@ -114,6 +141,8 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    gated: bool = False # True: use a gated MLP, for use with Gated Linear Units.
+    act_fn: str = "gelu" # Key to be used determining the activation function. See ACT_FUNCTIONS above for the valid inputs.
 
 class GPT(nn.Module):
 
