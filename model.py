@@ -15,13 +15,14 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from aru import ActivatedRotaryUnit, ReluSquared
+from aru import ActivatedRotaryUnit, ReluSquared, PCubic
 
 ACT_FUNCTIONS = {
     "aru": ActivatedRotaryUnit,
     "gelu": nn.GELU,
     "relu2": ReluSquared,
     "swish": nn.SiLU,
+    "pcubic": PCubic,
 }
 
 class LayerNorm(nn.Module):
@@ -118,6 +119,31 @@ class GatedMLP(nn.Module):
         x = self.dropout(x)
         return x
 
+class DataDependentPCubicMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.to_coeff = nn.Linear(config.n_embd, config.degree + 1, bias=False)
+        self.c_proj = nn.Linear(4 * config.n_emb, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+        self.degree = config.degree
+
+    def forward(self, x):
+        coeffs = self.to_coeff(x).clone().detach()
+        x = self.c_fc(x)
+        activated_x = x
+        for i in range(self.degree + 1):
+            power = self.degree - i
+            if i == 0:
+                activated_x = coeffs[..., i].unsqueeze(-1).expand_as(activated_x) * activated_x.pow(power)
+            else:
+                activated_x += coeffs[..., i].unsqueeze(-1).expand_as(activated_x) * activated_x.pow(power)
+        x = activated_x
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
 class Block(nn.Module):
 
     def __init__(self, config):
@@ -125,7 +151,10 @@ class Block(nn.Module):
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = GatedMLP(config) if config.gated else MLP(config)
+        if config.dd_cubic:
+            self.mlp = DataDependentPCubicMLP(config)
+        else:
+            self.mlp = GatedMLP(config) if config.gated else MLP(config)
 
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
@@ -142,7 +171,8 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     gated: bool = False # True: use a gated MLP, for use with Gated Linear Units.
-    act_fn: str = "gelu" # Key to be used determining the activation function. See ACT_FUNCTIONS above for the valid inputs.
+    act_fn: str = "gelu" # Key to be used determining the activation function. See ACT_FUNCTIONS above for the valid inputs
+    dd_cubic: bool = False # True: use data-dependent cubic stuff.
 
 class GPT(nn.Module):
 

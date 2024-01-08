@@ -20,13 +20,14 @@ def rotate_half(x):
 class ActivatedRotaryUnit(nn.Module):
     def forward(self, x):
         # Split tensor into two ("gating itself")
-        x1, x2 = torch.chunk(x, 2, dim=-1)
+        #x1, x2 = torch.chunk(x, 2, dim=-1)
         # Cosine
-        cos = x1 * x1.cos()
+        cos = x * x.cos()
         # Sine with x2 rotated by half
-        sin = rotate_half(x2) * x2.sin()
+        sin = rotate_half(x) * x.sin()
         # Concat and return
-        return torch.cat([cos, sin], dim=-1)
+        #return torch.cat([cos, sin], dim=-1)
+        return cos * sin
 
 class ReluSquared(nn.Module):
     """
@@ -34,3 +35,18 @@ class ReluSquared(nn.Module):
     """
     def forward(self, x):
         return F.relu(x) ** 2
+
+class PCubic(nn.Module):
+    """
+    PCubic. Let's see how this goes.
+    """
+    def __init__(self):
+        super().__init__()
+        self.a = nn.Parameter(torch.tensor(-1.0))
+        self.b = nn.Parameter(torch.tensor(0.0))
+        self.c = nn.Parameter(torch.tensor(1.0))
+        self.d = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, x):
+        return (self.a * x ** 3) + (self.b * x ** 2) + (self.c * x) + self.d
+
