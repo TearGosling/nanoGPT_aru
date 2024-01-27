@@ -123,15 +123,17 @@ class DataDependentPCubicMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.to_coeff = nn.Linear(config.n_embd, config.degree + 1, bias=False)
+        self.to_coeff = nn.Linear(config.n_embd * 4, config.degree + 1, bias=False)
+        # Initialize
+        #nn.init.uniform_(self.to_coeff.weight.data, a=-1.0, b=1.0)
         self.c_proj = nn.Linear(4 * config.n_emb, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
         self.degree = config.degree
 
     def forward(self, x):
-        coeffs = self.to_coeff(x).clone().detach()
         x = self.c_fc(x)
+        coeffs = self.to_coeff(x)
         activated_x = x
         for i in range(self.degree + 1):
             power = self.degree - i
